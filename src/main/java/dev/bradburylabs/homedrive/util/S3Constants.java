@@ -7,6 +7,7 @@ public final class S3Constants {
     public static final String X_AMZ_CONTENT_SHA256_HEADER = "x-amz-content-sha256";
     public static final String X_AMZ_REQUEST_ID_HEADER = "x-amz-request-id";
     public static final String X_AMZ_TRAILER_HEADER = "x-amz-trailer";
+    public static final String X_AMZ_CHECKSUM_ALGORITHM_HEADER = "x-amz-checksum-algorithm";
     public static final String CONTENT_MD5_HEADER = "Content-MD5";
 
     public static final String CONTENT_TYPE_AWS_CHUNKED = "aws-chunked";

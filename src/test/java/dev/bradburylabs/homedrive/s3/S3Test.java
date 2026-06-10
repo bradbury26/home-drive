@@ -1,6 +1,7 @@
 package dev.bradburylabs.homedrive.s3;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -21,12 +22,22 @@ import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.ChecksumAlgorithm;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 
 public class S3Test {
     private static final Logger log = LoggerFactory.getLogger(S3Test.class);
+
+    private static final String accessKeyId = "S97waGv2Y00wbrQKzWK8";
+    private static final String secretAccessKey = "OLReCVjxefCwtsZ3WhG6";
+
 
     @Test
     public void testGetObject() {
@@ -56,6 +67,33 @@ public class S3Test {
 
             client.putObject(PutObjectRequest.builder().bucket("admin").key("uploaded.png").contentType(MediaType.IMAGE_PNG_VALUE)
                     .checksumAlgorithm(ChecksumAlgorithm.SHA256).checksumSHA256(base64).build(), RequestBody.fromBytes(bytes));
+        }
+    }
+
+    @Test
+    public void testMutlipartUpload() throws IOException {
+        StaticCredentialsProvider staticCredentialsProvider = StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKeyId, secretAccessKey));
+
+        try (S3Client client = S3Client.builder().endpointOverride(URI.create("http://localhost:8080")).forcePathStyle(true).region(Region.of("bradburylabs"))
+                .credentialsProvider(staticCredentialsProvider).serviceConfiguration(builder -> builder.chunkedEncodingEnabled(true)).build()) {
+
+            CreateMultipartUploadResponse multipart =
+                    client.createMultipartUpload(CreateMultipartUploadRequest.builder().bucket("admin").key("multi/Rancher.msi").build());
+
+            InputStream resourceAsStream = S3Test.class.getResourceAsStream("/Rancher.msi");
+
+            int i = 1;
+            byte[] buffer = resourceAsStream.readNBytes(104_857_600);
+            while (buffer.length > 0) {
+                client.uploadPart(UploadPartRequest.builder().bucket("admin").key("multi/Rancher.msi").uploadId(multipart.uploadId()).partNumber(i).build(),
+                        RequestBody.fromBytes(buffer));
+
+                i++;
+                buffer = resourceAsStream.readNBytes(104_857_600);
+            }
+
+            client.completeMultipartUpload(CompleteMultipartUploadRequest.builder().bucket("admin").key("multi/Rancher.msi").uploadId(multipart.uploadId())
+                    .multipartUpload(CompletedMultipartUpload.builder().parts(CompletedPart.builder().partNumber(1).build()).build()).build());
         }
     }
 

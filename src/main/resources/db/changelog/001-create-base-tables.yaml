@@ -163,6 +163,101 @@ databaseChangeLog:
                   constraints:
                     nullable: false
         - createTable:
+            tableName: object_upload
+            columns:
+              - column:
+                  name: id
+                  type: varchar(14)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: upload_status
+                  type: clob
+                  constraints:
+                    nullable: false
+              - column:
+                  name: user_id
+                  type: varchar(14)
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_object_upload_user_id
+                    referencedTableName: app_user
+                    referencedColumnNames: id
+              - column:
+                  name: object_key
+                  type: clob
+                  constraints:
+                    nullable: false
+              - column:
+                  name: content_encoding
+                  type: varchar(64)
+              - column:
+                  name: content_type
+                  type: varchar(64)
+              - column:
+                  name: checksum_type
+                  type: varchar(32)
+              - column:
+                  name: checksum
+                  type: clob
+              - column:
+                  name: created_date
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_updated
+                  type: timestamp
+                  constraints:
+                    nullable: false
+
+        - createTable:
+            tableName: object_upload_part
+            columns:
+              - column:
+                  name: id
+                  type: varchar(14)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: object_upload_id
+                  type: varchar(14)
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_object_upload_part_object_upload_id
+                    referencedTableName: object_upload
+                    referencedColumnNames: id
+                    unique: true
+                    uniqueConstraintName: unique_object_upload_part
+              - column:
+                  name: part_number
+                  type: int
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: unique_object_upload_part
+              - column:
+                  name: etag
+                  type: clob
+              - column:
+                  name: content_length
+                  type: bigint
+                  constraints:
+                    nullable: false
+              - column:
+                  name: checksum
+                  type: clob
+              - column:
+                  name: created_date
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_updated
+                  type: timestamp
+                  constraints:
+                    nullable: false
+        - createTable:
             tableName: user_object_outbox
             columns:
               - column:

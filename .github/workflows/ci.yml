@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  
+permissions: 
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      digest-amd64: ${{ steps.digest.outputs.digest_amd64 }}
+      digest-arm64: ${{ steps.digest.outputs.digest_arm64 }}
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            suffix: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: 'maven'
+          
+      - name: Build & Publish
+        run: mvn -B -Pnative -DskipTests -Dspring-boot.build-image.imageName="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${{ matrix.suffix }}" -Dspring-boot.build-image.publish=true spring-boot:build-image
+
+      - id: digest
+        name: Get image digest
+        run: echo "digest_${{ matrix.suffix }}=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${{ matrix.suffix }})" >> "$GITHUB_OUTPUT"
+  
+  build-multiarch-image:
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        run: docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --amend ${{ needs.build.outputs.digest-amd64 }} --amend ${{ needs.build.outputs.digest-arm64 }}
+
+      - name: Push multi-arch manifest
+        run: docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

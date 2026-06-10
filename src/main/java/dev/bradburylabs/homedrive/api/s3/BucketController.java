@@ -2,10 +2,13 @@ package dev.bradburylabs.homedrive.api.s3;
 
 import static dev.bradburylabs.homedrive.util.S3Constants.X_AMZ_CONTENT_SHA256_HEADER;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import dev.bradburylabs.homedrive.api.s3.exception.BucketNotFoundException;
@@ -22,6 +25,11 @@ import lombok.RequiredArgsConstructor;
 public class BucketController {
     private final S3BucketService s3BucketService;
     private final UserService userService;
+
+    @RequestMapping(value = {"/{bucketName}", "/{bucketName}/"}, method = RequestMethod.HEAD)
+    public ResponseEntity<Void> headBucket(@PathVariable String bucketName) {
+        return ResponseEntity.ok().build();
+    }
 
     @GetMapping(produces = MediaType.APPLICATION_XML_VALUE)
     public ListBucketsResponse listBuckets(@RequestParam(value = "continuation-token", required = false) String continuationToken,

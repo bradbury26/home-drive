@@ -21,8 +21,10 @@ import dev.bradburylabs.homedrive.api.s3.exception.ObjectPreconditionFailedExcep
 import dev.bradburylabs.homedrive.exception.BadDigestException;
 import dev.bradburylabs.homedrive.exception.UserObjectNotFoundException;
 import dev.bradburylabs.homedrive.model.s3.ErrorResponse;
+import lombok.extern.slf4j.Slf4j;
 
 @ControllerAdvice(basePackages = "dev.bradburylabs.homedrive.api.s3")
+@Slf4j
 public class S3ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AuthorizationDeniedException.class)
     public ResponseEntity<Object> handleAuthorizationDeniedException(AuthorizationDeniedException e, WebRequest request) {
@@ -67,6 +69,8 @@ public class S3ApiExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     protected ResponseEntity<Object> handleS3Exception(Exception e, HttpStatus status, String code, String message, WebRequest request) {
+        log.error(e.getMessage(), e);
+
         String resource = "";
         String requestId = MDC.get(REQUEST_ID);
 

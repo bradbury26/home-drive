@@ -6,9 +6,15 @@ import dev.bradburylabs.homedrive.model.object.StoreObjectRequest;
 import dev.bradburylabs.homedrive.model.object.StoreObjectResponse;
 
 public interface ObjectStorageService<T extends StoreObjectRequest, D extends DeleteObjectRequest> {
-    StoreObjectResponse storeObject(T objectStorageRequest, InputStream inputStream);
+    StoreObjectResponse storeSinglePartObject(T objectStorageRequest, InputStream inputStream);
 
-    StoreObjectResponse storeObjectStream(T objectStorageRequest, InputStream inputStream, boolean trailers);
+    StoreObjectResponse storeChunkedSinglePartObject(T objectStorageRequest, InputStream inputStream, boolean trailers);
 
     void deleteObject(D objectDeleteRequest);
+
+    String createObjectUpload(T request);
+
+    StoreObjectResponse storeObjectUploadPart(String uploadId, int partNumber, T request, InputStream inputStream);
+
+    StoreObjectResponse completeObjectUpload(String uploadId);
 }

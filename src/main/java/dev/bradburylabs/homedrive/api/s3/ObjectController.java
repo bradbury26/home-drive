@@ -7,6 +7,7 @@ import static dev.bradburylabs.homedrive.util.S3Constants.CONTENT_TYPE_AWS_CHUNK
 import static dev.bradburylabs.homedrive.util.S3Constants.REQUEST_ID;
 import static dev.bradburylabs.homedrive.util.S3Constants.RESPONSE_CONTENT_ENCODING_PARAMETER;
 import static dev.bradburylabs.homedrive.util.S3Constants.RESPONSE_CONTENT_TYPE_PARAMETER;
+import static dev.bradburylabs.homedrive.util.S3Constants.X_AMZ_CHECKSUM_ALGORITHM_HEADER;
 import static dev.bradburylabs.homedrive.util.S3Constants.X_AMZ_CHECKSUM_CRC32_HEADER;
 import static dev.bradburylabs.homedrive.util.S3Constants.X_AMZ_CHECKSUM_MD5_HEADER;
 import static dev.bradburylabs.homedrive.util.S3Constants.X_AMZ_CHECKSUM_SHA1_HEADER;
@@ -25,6 +26,7 @@ import static org.springframework.http.HttpHeaders.IF_NONE_MATCH;
 import static org.springframework.http.HttpHeaders.IF_UNMODIFIED_SINCE;
 import static org.springframework.http.HttpHeaders.LAST_MODIFIED;
 import static org.springframework.http.HttpHeaders.RANGE;
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -63,9 +65,12 @@ import dev.bradburylabs.homedrive.model.object.Checksum;
 import dev.bradburylabs.homedrive.model.object.HttpRange;
 import dev.bradburylabs.homedrive.model.object.RetrieveObjectResponse;
 import dev.bradburylabs.homedrive.model.object.StoreObjectResponse;
+import dev.bradburylabs.homedrive.model.s3.CompleteMultipartUpload;
+import dev.bradburylabs.homedrive.model.s3.CompleteMultipartUploadResult;
 import dev.bradburylabs.homedrive.model.s3.DeletedObject;
 import dev.bradburylabs.homedrive.model.s3.EncodingType;
 import dev.bradburylabs.homedrive.model.s3.Error;
+import dev.bradburylabs.homedrive.model.s3.InitiateMultipartUploadResult;
 import dev.bradburylabs.homedrive.model.s3.ListObjectV2Request;
 import dev.bradburylabs.homedrive.model.s3.ListObjectsRequest;
 import dev.bradburylabs.homedrive.model.s3.ListObjectsResult;
@@ -85,6 +90,7 @@ import dev.bradburylabs.homedrive.util.RangeHeaderParser;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import tools.jackson.dataformat.xml.XmlMapper;
 
 @RestController
 @RequestMapping(headers = X_AMZ_CONTENT_SHA256_HEADER)
@@ -95,6 +101,7 @@ public class ObjectController {
     private final S3ObjectRetrievalService s3ObjectRetrievalService;
     private final S3ListObjectsService s3ListObjectsService;
     private final UserService userService;
+    private final XmlMapper xmlMapper;
 
     @RequestMapping(value = "/{bucketName}/{*path}", method = RequestMethod.HEAD)
     @ReadAccess
@@ -161,9 +168,9 @@ public class ObjectController {
                         checksum(request, contentMd5, trailerHeader), ifMatch, "*".equals(ifNoneMatch), trailerHeader);
 
         StoreObjectResponse result = switch (contentSha256) {
-            case "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER" -> s3ObjectStorageService.storeObjectStream(objectStorageRequest, inputStream, true);
-            case "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" -> s3ObjectStorageService.storeObjectStream(objectStorageRequest, inputStream, false);
-            default -> s3ObjectStorageService.storeObject(objectStorageRequest, inputStream);
+            case "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER" -> s3ObjectStorageService.storeChunkedSinglePartObject(objectStorageRequest, inputStream, true);
+            case "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" -> s3ObjectStorageService.storeChunkedSinglePartObject(objectStorageRequest, inputStream, false);
+            default -> s3ObjectStorageService.storeSinglePartObject(objectStorageRequest, inputStream);
         };
 
         HttpHeaders headers = new HttpHeaders();
@@ -210,6 +217,73 @@ public class ObjectController {
         }
 
         return new S3DeleteObjectsResponse(deletedObjects, errors);
+    }
+
+    @PostMapping(value = "/{bucketName}/{*path}", params = "uploads", produces = MediaType.APPLICATION_XML_VALUE)
+    @WriteAccess
+    public InitiateMultipartUploadResult createMultipartUpload(@PathVariable String bucketName, @PathVariable String path,
+            @RequestHeader(value = CONTENT_ENCODING, required = false) String contentEncoding,
+            @RequestHeader(value = CONTENT_TYPE, defaultValue = MediaType.APPLICATION_OCTET_STREAM_VALUE) String contentType,
+            @RequestHeader(value = X_AMZ_CHECKSUM_ALGORITHM_HEADER, required = false) ChecksumType checksumType) {
+        checkBucketAccess(bucketName);
+
+        String key = path.substring(1);
+        String uploadId = s3ObjectStorageService.createObjectUpload(
+                new S3StoreObjectRequest(userId(bucketName), key, sanitiseContentEncoding(contentEncoding), contentType, new Checksum(checksumType, null), null,
+                        false, null));
+
+        return new InitiateMultipartUploadResult(bucketName, key, uploadId);
+    }
+
+    @PutMapping(value = "/{bucketName}/{*path}", params = "uploadId")
+    @WriteAccess
+    public ResponseEntity<Void> uploadPart(@PathVariable String bucketName, @PathVariable String path, @RequestParam("partNumber") int partNumber,
+            @RequestParam("uploadId") String uploadId, @RequestHeader(value = CONTENT_MD5_HEADER, required = false) String contentMd5, InputStream inputStream,
+            HttpServletRequest request) {
+        checkBucketAccess(bucketName);
+
+        StoreObjectResponse result = s3ObjectStorageService.storeObjectUploadPart(uploadId, partNumber,
+                new S3StoreObjectRequest(userId(bucketName), path.substring(1), null, null, checksum(request, contentMd5, null), null, false, null),
+                inputStream);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(X_AMZ_REQUEST_ID_HEADER, MDC.get(REQUEST_ID));
+        headers.add(ETAG, result.etag());
+        addChecksumHeader(headers, result.checksum());
+
+        return ResponseEntity.ok().headers(headers).build();
+    }
+
+    @PostMapping(value = "/{bucketName}/{*path}", params = "uploadId", produces = MediaType.APPLICATION_XML_VALUE)
+    @WriteAccess
+    public ResponseEntity<StreamingResponseBody> completeMultipartUpload(@PathVariable String bucketName, @PathVariable String path,
+            @RequestParam("uploadId") String uploadId, @RequestBody(required = false) CompleteMultipartUpload completeMultipartUpload) {
+        checkBucketAccess(bucketName);
+
+        StreamingResponseBody responseBody = outputStream -> {
+            Thread heartbeatThread = Thread.ofVirtual().start(() -> {
+                do {
+                    try {
+                        Thread.sleep(10_000);
+                        outputStream.write(' ');
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    } catch (InterruptedException e) {
+                        // Do Nothing
+                    }
+
+                } while (!Thread.currentThread().isInterrupted());
+            });
+
+            StoreObjectResponse result = s3ObjectStorageService.completeObjectUpload(uploadId);
+
+            heartbeatThread.interrupt();
+
+            xmlMapper.writeValue(outputStream, new CompleteMultipartUploadResult(bucketName, path.substring(1), result.etag()));
+        };
+
+        return ResponseEntity.ok(responseBody);
+
     }
 
     public <T> ResponseEntity<T> retrieveObject(String bucketName, String path, String ifMatch, String ifNoneMatch, Instant ifModifiedSince,

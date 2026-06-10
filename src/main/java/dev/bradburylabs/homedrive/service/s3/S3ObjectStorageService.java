@@ -3,8 +3,10 @@ package dev.bradburylabs.homedrive.service.s3;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.function.Consumer;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -25,63 +27,45 @@ import dev.bradburylabs.homedrive.model.s3.S3DeleteObjectRequest;
 import dev.bradburylabs.homedrive.model.s3.S3StoreObjectRequest;
 import dev.bradburylabs.homedrive.model.s3.Trailers;
 import dev.bradburylabs.homedrive.properties.HomeDriveProperties;
+import dev.bradburylabs.homedrive.repository.ObjectUploadPartRepository;
+import dev.bradburylabs.homedrive.repository.ObjectUploadRepository;
 import dev.bradburylabs.homedrive.repository.UserObjectRepository;
 import dev.bradburylabs.homedrive.service.AbstractObjectStorageService;
 import dev.bradburylabs.homedrive.service.UserObjectOutboxService;
 
 @Service
 public class S3ObjectStorageService extends AbstractObjectStorageService<S3StoreObjectRequest, S3DeleteObjectRequest> {
-    public S3ObjectStorageService(UserObjectRepository userObjectRepository, UserObjectOutboxService userObjectOutboxService,
-            HomeDriveProperties homeDriveProperties, TransactionTemplate transactionTemplate) {
-        super(userObjectRepository, userObjectOutboxService, homeDriveProperties, transactionTemplate);
+    public S3ObjectStorageService(UserObjectRepository userObjectRepository, ObjectUploadRepository objectUploadRepository,
+            ObjectUploadPartRepository objectUploadPartRepository, UserObjectOutboxService userObjectOutboxService, HomeDriveProperties homeDriveProperties,
+            TransactionTemplate transactionTemplate) {
+        super(userObjectRepository, objectUploadRepository, objectUploadPartRepository, userObjectOutboxService, homeDriveProperties, transactionTemplate);
     }
 
     @Override
-    public StoreObjectResponse storeObjectStream(S3StoreObjectRequest objectStorageRequest, InputStream inputStream, boolean trailers) {
+    public StoreObjectResponse storeChunkedSinglePartObject(S3StoreObjectRequest objectStorageRequest, InputStream inputStream, boolean trailers) {
         S3AuthenticationDetails s3AuthenticationDetails = s3AuthenticationDetails();
         ChunkSignatureValidator chunkSignatureValidator = new ChunkSignatureValidator(s3AuthenticationDetails, secretAccessKey());
         ChunkedMetadata chunkedMetadata = new ChunkedMetadata(s3AuthenticationDetails.signature());
 
-        StoreObjectResponse result = storeObject(objectStorageRequest, outputStream -> {
-            try {
-                byte[] bytes = new byte[1];
-                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-
-                while ((inputStream.read(bytes)) != -1) {
-                    byteArrayOutputStream.writeBytes(bytes);
-
-                    int value = bytes[0] & 0xff;
-
-                    if (value == '\n') {
-                        String metadata = byteArrayOutputStream.toString(StandardCharsets.UTF_8).trim();
-                        chunkedMetadata.addMetadata(metadata);
-
-                        int chunkSize = chunkedMetadata.getCurrentChunkSize();
-                        byte[] content = inputStream.readNBytes(chunkSize);
-
-                        if (!chunkSignatureValidator.validateSignature(chunkedMetadata, DigestUtils.sha256Hex(content))) {
-                            throw new BadDigestException();
-                        }
-
-                        if (chunkSize == 0) {
-
-                            break;
-                        }
-
-                        outputStream.write(content);
-
-                        inputStream.skipNBytes(2);
-                        byteArrayOutputStream.reset();
-                    }
-                }
-            } catch (IOException e) {
-                throw new InvalidChunkException("Error reading object stream", e);
-            }
-        });
+        StoreObjectResponse result = storeSinglePartObject(objectStorageRequest, objectStreamConsumer(chunkedMetadata, chunkSignatureValidator, inputStream));
 
         if (trailers) {
-            handleTrailers(chunkedMetadata, result.checksum().checksum(), objectStorageRequest, inputStream);
+            handleTrailers(chunkedMetadata, result.checksum().checksum(), objectStorageRequest, inputStream, true);
         }
+
+        return result;
+    }
+
+    @Override
+    public StoreObjectResponse storeObjectUploadPart(String uploadId, int partNumber, S3StoreObjectRequest request, InputStream inputStream) {
+        S3AuthenticationDetails s3AuthenticationDetails = s3AuthenticationDetails();
+        ChunkSignatureValidator chunkSignatureValidator = new ChunkSignatureValidator(s3AuthenticationDetails, secretAccessKey());
+        ChunkedMetadata chunkedMetadata = new ChunkedMetadata(s3AuthenticationDetails.signature());
+
+        StoreObjectResponse result =
+                storeUserObjectPart(uploadId, partNumber, request, objectStreamConsumer(chunkedMetadata, chunkSignatureValidator, inputStream));
+
+        handleTrailers(chunkedMetadata, result.checksum().checksum(), request, inputStream, false);
 
         return result;
     }
@@ -108,14 +92,18 @@ public class S3ObjectStorageService extends AbstractObjectStorageService<S3Store
         }
     }
 
-    private void handleTrailers(ChunkedMetadata chunkedMetadata, String checksum, S3StoreObjectRequest objectStorageRequest, InputStream inputStream) {
+    private void handleTrailers(ChunkedMetadata chunkedMetadata, String checksum, S3StoreObjectRequest objectStorageRequest, InputStream inputStream,
+            boolean failOnMissingTrailers) {
         try {
             String trailer = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8).trim();
 
             String[] trailerLines = trailer.split("\n");
 
             if (trailerLines.length < 2 || !trailerLines[1].contains(":")) {
-                throw new InvalidTrailersException("Trailers not found");
+                if (failOnMissingTrailers) {
+                    throw new InvalidTrailersException("Trailers not found");
+                }
+                return;
             }
 
             String expectedSignature = trailerLines[1].split(":")[1].trim();
@@ -140,5 +128,44 @@ public class S3ObjectStorageService extends AbstractObjectStorageService<S3Store
                 .map(UsernamePasswordAuthenticationToken.class::cast).map(UsernamePasswordAuthenticationToken::getDetails)
                 .filter(S3AuthenticationDetails.class::isInstance).map(S3AuthenticationDetails.class::cast)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid authentication found"));
+    }
+
+    private Consumer<OutputStream> objectStreamConsumer(ChunkedMetadata chunkedMetadata, ChunkSignatureValidator chunkSignatureValidator,
+            InputStream inputStream) {
+        return outputStream -> {
+            try {
+                byte[] bytes = new byte[1];
+                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+
+                while ((inputStream.read(bytes)) != -1) {
+                    byteArrayOutputStream.writeBytes(bytes);
+
+                    int value = bytes[0] & 0xff;
+
+                    if (value == '\n') {
+                        String metadata = byteArrayOutputStream.toString(StandardCharsets.UTF_8).trim();
+                        chunkedMetadata.addMetadata(metadata);
+
+                        int chunkSize = chunkedMetadata.getCurrentChunkSize();
+                        byte[] content = inputStream.readNBytes(chunkSize);
+
+                        if (!chunkSignatureValidator.validateSignature(chunkedMetadata, DigestUtils.sha256Hex(content))) {
+                            throw new BadDigestException();
+                        }
+
+                        if (chunkSize == 0) {
+                            break;
+                        }
+
+                        outputStream.write(content);
+
+                        inputStream.skipNBytes(2);
+                        byteArrayOutputStream.reset();
+                    }
+                }
+            } catch (IOException e) {
+                throw new InvalidChunkException("Error reading object stream", e);
+            }
+        };
     }
 }

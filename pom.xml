@@ -133,6 +133,9 @@
                 <configuration>
                     <image>
                         <builder>bellsoft/buildpacks.builder:musl</builder>
+                        <env>
+                            <BP_NATIVE_IMAGE_BUILD_ARGUMENTS>-march=compatibility</BP_NATIVE_IMAGE_BUILD_ARGUMENTS>
+                        </env>
                     </image>
                 </configuration>
             </plugin>

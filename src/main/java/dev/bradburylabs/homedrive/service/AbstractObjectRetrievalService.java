@@ -1,9 +1,14 @@
 package dev.bradburylabs.homedrive.service;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
+import java.io.SequenceInputStream;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Stream;
 import dev.bradburylabs.homedrive.entity.UserObject;
 import dev.bradburylabs.homedrive.exception.ObjectReadException;
 import dev.bradburylabs.homedrive.exception.UserObjectNotFoundException;
@@ -36,10 +41,11 @@ public abstract class AbstractObjectRetrievalService<T extends RetrieveObjectReq
         Path dataDirectory = Path.of(homeDriveProperties.getDataLocation(), userId);
         Path storageDirectory = PathUtils.calculateStorageDirectory(key);
         Path versionDirectory = dataDirectory.resolve(storageDirectory).resolve(userObject.getObjectVersion());
-        Path objectPath = versionDirectory.resolve("%s.dat".formatted(userObject.getId()));
         Path deleteMarkerPath = versionDirectory.resolve(".delete");
 
-        if (deleteMarkerPath.toFile().exists() || !objectPath.toFile().exists()) {
+        File[] objectFiles = versionDirectory.toFile().listFiles((dir, name) -> !name.equals(".delete"));
+
+        if (deleteMarkerPath.toFile().exists() || objectFiles == null || objectFiles.length == 0) {
             throw new UserObjectNotFoundException("Object not found for key: " + key);
         }
 
@@ -47,7 +53,15 @@ public abstract class AbstractObjectRetrievalService<T extends RetrieveObjectReq
 
         if (retrieveInputStream) {
             try {
-                inputStream = Files.newInputStream(objectPath);
+                List<FileInputStream> fileInputStreams = Stream.of(objectFiles).map(objectFile -> {
+                    try {
+                        return new FileInputStream(objectFile);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }).toList();
+
+                inputStream = new SequenceInputStream(Collections.enumeration(fileInputStreams));
                 HttpRange range = objectRetrievalRequest.getRange();
 
                 if (range != null) {
