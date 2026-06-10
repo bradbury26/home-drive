@@ -1,0 +1,192 @@
+databaseChangeLog:
+  - changeSet:
+      id: create-user-tables
+      author: sam
+      changes:
+        - createTable:
+            tableName: app_user
+            columns:
+              - column:
+                  name: id
+                  type: varchar(14)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: username
+                  type: clob
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: unique_username
+              - column:
+                  name: name
+                  type: clob
+              - column:
+                  name: email
+                  type: clob
+              - column:
+                  name: password
+                  type: clob
+              - column:
+                  name: created_date
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: modified_date
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: admin_user
+                  type: boolean
+                  defaultValueBoolean: false
+        - createTable:
+            tableName: persistent_logins
+            columns:
+              - column:
+                  name: username
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: series
+                  type: varchar(64)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: token
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_used
+                  type: timestamp
+                  constraints:
+                    nullable: false
+        - createTable:
+            tableName: s3_api_token
+            columns:
+              - column:
+                  name: id
+                  type: varchar(14)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: user_id
+                  type: varchar(14)
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_s3_api_token_user_id
+                    referencedTableName: app_user
+                    referencedColumnNames: id
+                    deleteCascade: true
+              - column:
+                  name: access_key_id
+                  type: varchar(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: secret_access_key
+                  type: clob
+                  constraints:
+                    nullable: false
+              - column:
+                  name: read_permission
+                  type: boolean
+                  defaultValueBoolean: true
+              - column:
+                  name: write_permission
+                  type: boolean
+                  defaultValueBoolean: false
+  - changeSet:
+      id: create-user-object-tables
+      author: sam
+      changes:
+        - createTable:
+            tableName: user_object
+            columns:
+              - column:
+                  name: id
+                  type: varchar(14)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: user_id
+                  type: varchar(14)
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_user_object_user_id
+                    referencedTableName: app_user
+                    referencedColumnNames: id
+                    deleteCascade: true
+                    unique: true
+                    uniqueConstraintName: unique_user_object
+              - column:
+                  name: object_key
+                  type: clob
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: unique_user_object
+              - column:
+                  name: etag
+                  type: clob
+              - column:
+                  name: content_encoding
+                  type: varchar(64)
+              - column:
+                  name: content_type
+                  type: varchar(64)
+              - column:
+                  name: content_length
+                  type: bigint
+                  constraints:
+                    nullable: false
+              - column:
+                  name: checksum_type
+                  type: varchar(32)
+              - column:
+                  name: checksum
+                  type: clob
+              - column:
+                  name: object_version
+                  type: varchar(14)
+              - column:
+                  name: created_date
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_updated
+                  type: timestamp
+                  constraints:
+                    nullable: false
+        - createTable:
+            tableName: user_object_outbox
+            columns:
+              - column:
+                  name: id
+                  type: varchar(14)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: user_id
+                  type: varchar(14)
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_user_object_outbox_user_id
+                    referencedTableName: app_user
+                    referencedColumnNames: id
+                    deleteCascade: true
+              - column:
+                  name: object_key
+                  type: clob
+                  constraints:
+                    nullable: false
+              - column:
+                  name: previous_version
+                  type: varchar(14)
+              - column:
+                  name: current_version
+                  type: varchar(14)

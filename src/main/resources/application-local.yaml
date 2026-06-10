@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/home_drive
+    username: postgres
+    password: test1234
+
+home-drive:
+  security:
+    token-key: test1234
+  data-location: data
