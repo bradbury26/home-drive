@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME:home_drive}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
+  threads:
+    virtual:
+      enabled: true
+  jpa:
+    open-in-view: false
+  jackson:
+    deserialization:
+      fail-on-null-for-primitives: false
+      fail-on-trailing-tokens: false
+
+home-drive:
+  security:
+    token-key: ${TOKEN_KEY}
+  data-location: ${DATA_LOCATION:/var/lib/home-drive/data}

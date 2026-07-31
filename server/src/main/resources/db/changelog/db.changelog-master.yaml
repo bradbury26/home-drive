@@ -1,0 +1,5 @@
+databaseChangeLog:
+  - include:
+      file: db/changelog/001-create-base-tables.yaml
+  - include:
+      file: db/changelog/views.yaml

@@ -1,0 +1,19 @@
+databaseChangeLog:
+  - changeSet:
+      id: views
+      author: sam
+      runOnChange: true
+      changes:
+        - createView:
+            viewName: s3_user_object
+            replaceIfExists: true
+            selectQuery: |-
+              select uo.*, user_object_closures.object_key || case when uo.object_type = 'DIRECTORY' then '/' else '' end as object_key
+              from user_object uo
+              inner join (
+              select uoc.descendant_id as id, string_agg(uo2.object_name, '/' order by uoc.depth desc) as object_key
+              from user_object uo2
+              inner join user_object_closure uoc
+                on uoc.ancestor_id = uo2.id group by uoc.descendant_id
+              ) as user_object_closures
+              on user_object_closures.id = uo.id
